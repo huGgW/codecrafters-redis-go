@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 )
@@ -27,12 +29,24 @@ func main() {
 		fmt.Println("Error accepting connection: ", err.Error())
 		os.Exit(1)
 	}
+	defer conn.Close()
 
-	// TODO: add encoder for simple string
-	_, err = conn.Write([]byte("+PONG\r\n"))
-	if err != nil {
-		fmt.Println("Error write to connection: ", err.Error())
-		os.Exit(1)
+	for {
+		buf := make([]byte, 1024)
+		_, err := conn.Read(buf)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			fmt.Println("Error read from connection: ", err.Error())
+			os.Exit(1)
+		}
+
+		// TODO: add encoder for simple string
+		_, err = io.WriteString(conn, "+PONG\r\n")
+		if err != nil {
+			fmt.Println("Error write to connection: ", err.Error())
+			os.Exit(1)
+		}
 	}
-	_ = conn.Close()
 }
