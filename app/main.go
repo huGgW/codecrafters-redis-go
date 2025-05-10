@@ -22,9 +22,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	_, err = l.Accept()
+	conn, err := l.Accept()
 	if err != nil {
 		fmt.Println("Error accepting connection: ", err.Error())
 		os.Exit(1)
 	}
+
+	// TODO: add encoder for simple string
+	_, err = conn.Write([]byte("+PONG\r\n"))
+	if err != nil {
+		fmt.Println("Error write to connection: ", err.Error())
+		os.Exit(1)
+	}
+	_ = conn.Close()
 }
