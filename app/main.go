@@ -1,52 +1,92 @@
 package main
 
 import (
-	"errors"
-	"fmt"
-	"io"
-	"net"
+	"log/slog"
 	"os"
-)
+	"os/signal"
 
-// Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var (
-	_ = net.Listen
-	_ = os.Exit
+	"github.com/codecrafters-io/redis-starter-go/event"
+	"github.com/codecrafters-io/redis-starter-go/processor"
 )
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+	// add notifier
+	shutdownCh := make(chan os.Signal, 1)
+	signal.Notify(shutdownCh, os.Interrupt)
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	// initialize logger
+	logger := slog.Default()
+
+	logger.Info("Starting Redis server...")
+
+	// initialize handlers
+	tcpProcessor, err := processor.NewTCPProcessor("0.0.0.0:6379", logger)
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
+		logger.Error("failed to initialicze tcp processor", "error", err)
 		os.Exit(1)
 	}
+	defer func() { _ = tcpProcessor.Close() }()
 
-	conn, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
-	defer conn.Close()
+	loop := event.NewLoop(
+		[]event.Handler{
+			&processor.TCPReadHandler{},
+			&processor.TCPWriteHandler{},
+			&processor.TCPCloseHandler{},
+			processor.NewErrorHandler(logger),
+		},
+		[]event.Pusher{tcpProcessor},
+		logger,
+	)
 
-	for {
-		buf := make([]byte, 1024)
-		_, err := conn.Read(buf)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			fmt.Println("Error read from connection: ", err.Error())
-			os.Exit(1)
-		}
-
-		// TODO: add encoder for simple string
-		_, err = io.WriteString(conn, "+PONG\r\n")
-		if err != nil {
-			fmt.Println("Error write to connection: ", err.Error())
-			os.Exit(1)
-		}
-	}
+	loop.Start()
+	<-shutdownCh
+	loop.Shutdown()
 }
+
+// func listen(listener net.Listener) error {
+// 	for {
+// 		if err := func() error {
+// 			conn, err := listener.Accept()
+// 			if err != nil {
+// 				return fmt.Errorf("Error accepting connection: %w", err)
+// 			}
+// 			defer conn.Close()
+//
+// 			if err := handleConn(conn); err != nil {
+// 				if errors.Is(err, io.EOF) {
+// 					return nil
+// 				}
+// 				return fmt.Errorf("Error handling connection: %w", err)
+// 			}
+//
+// 			return nil
+// 		}(); err != nil {
+// 			return err
+// 		}
+// 	}
+// }
+//
+// func handleConn(conn net.Conn) error {
+// 	reader := bufio.NewReader(conn)
+// 	writer := bufio.NewWriter(conn)
+//
+// 	for {
+// 		_, err := reader.ReadString('\n')
+// 		if err != nil {
+// 			if errors.Is(err, io.EOF) {
+// 				return io.EOF
+// 			}
+// 			return fmt.Errorf("Error read from connection: %w", err)
+// 		}
+//
+// 		// TODO: add encoder for simple string
+// 		_, err = writer.WriteString("+PONG\r\n")
+// 		if err != nil {
+// 			return fmt.Errorf("Error write to connection: %w", err)
+// 		}
+//
+// 		if err := writer.Flush(); err != nil {
+// 			return fmt.Errorf("Error write to connection: %w", err)
+// 		}
+// 	}
+// }
