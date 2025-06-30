@@ -6,6 +6,7 @@ import (
 	"os/signal"
 
 	"github.com/codecrafters-io/redis-starter-go/event"
+	"github.com/codecrafters-io/redis-starter-go/id"
 	"github.com/codecrafters-io/redis-starter-go/processor"
 )
 
@@ -15,78 +16,39 @@ func main() {
 	signal.Notify(shutdownCh, os.Interrupt)
 
 	// initialize logger
-	logger := slog.Default()
+	slog.Info("Starting Redis server...")
 
-	logger.Info("Starting Redis server...")
+	// initialize ID issuer
+	idIssuer := &id.NumIDIssuer{}
 
 	// initialize handlers
-	tcpProcessor, err := processor.NewTCPProcessor("0.0.0.0:6379", logger)
+	tcpProcessor, err := processor.NewTCPProcessor("0.0.0.0:6379", idIssuer)
 	if err != nil {
-		logger.Error("failed to initialicze tcp processor", "error", err)
+		slog.Error("failed to initialicze tcp processor", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = tcpProcessor.Close() }()
 
+	lexer := processor.NewLexer()
+	parser := processor.NewParser()
+	executor := processor.NewExecutor()
+	formatter := processor.NewFormatter()
+
 	loop := event.NewLoop(
 		[]event.Handler{
-			&processor.TCPReadHandler{},
-			&processor.TCPWriteHandler{},
-			&processor.TCPCloseHandler{},
-			processor.NewErrorHandler(logger),
+			tcpProcessor.ReadHandler(),
+			tcpProcessor.WriteHandler(),
+			tcpProcessor.CloseHandler(),
+			lexer.LexingHandler(),
+			parser.ParseHandler(),
+			executor.ExecuteHandler(),
+			formatter.FormatHandler(),
+			processor.NewErrorHandler(),
 		},
 		[]event.Pusher{tcpProcessor},
-		logger,
 	)
 
 	loop.Start()
 	<-shutdownCh
 	loop.Shutdown()
 }
-
-// func listen(listener net.Listener) error {
-// 	for {
-// 		if err := func() error {
-// 			conn, err := listener.Accept()
-// 			if err != nil {
-// 				return fmt.Errorf("Error accepting connection: %w", err)
-// 			}
-// 			defer conn.Close()
-//
-// 			if err := handleConn(conn); err != nil {
-// 				if errors.Is(err, io.EOF) {
-// 					return nil
-// 				}
-// 				return fmt.Errorf("Error handling connection: %w", err)
-// 			}
-//
-// 			return nil
-// 		}(); err != nil {
-// 			return err
-// 		}
-// 	}
-// }
-//
-// func handleConn(conn net.Conn) error {
-// 	reader := bufio.NewReader(conn)
-// 	writer := bufio.NewWriter(conn)
-//
-// 	for {
-// 		_, err := reader.ReadString('\n')
-// 		if err != nil {
-// 			if errors.Is(err, io.EOF) {
-// 				return io.EOF
-// 			}
-// 			return fmt.Errorf("Error read from connection: %w", err)
-// 		}
-//
-// 		// TODO: add encoder for simple string
-// 		_, err = writer.WriteString("+PONG\r\n")
-// 		if err != nil {
-// 			return fmt.Errorf("Error write to connection: %w", err)
-// 		}
-//
-// 		if err := writer.Flush(); err != nil {
-// 			return fmt.Errorf("Error write to connection: %w", err)
-// 		}
-// 	}
-// }

@@ -10,8 +10,8 @@ type ErrorHandler struct {
 	logger *slog.Logger
 }
 
-func NewErrorHandler(logger *slog.Logger) *ErrorHandler {
-	return &ErrorHandler{logger: logger}
+func NewErrorHandler() *ErrorHandler {
+	return &ErrorHandler{}
 }
 
 func (h *ErrorHandler) Target() event.Type {

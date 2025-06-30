@@ -12,7 +12,6 @@ import (
 type Loop struct {
 	handlerMap map[Type]Handler
 	pushers    []Pusher
-	logger     *slog.Logger
 
 	queue      *queue.ConcurrentQueue[Event]
 	stopSignal chan struct{}
@@ -22,7 +21,6 @@ type Loop struct {
 func NewLoop(
 	handlers []Handler,
 	pushers []Pusher,
-	logger *slog.Logger,
 ) *Loop {
 	handlerMap := make(map[Type]Handler, len(handlers))
 	for _, h := range handlers {
@@ -32,7 +30,6 @@ func NewLoop(
 	return &Loop{
 		handlerMap: handlerMap,
 		pushers:    slices.Clone(pushers),
-		logger:     logger,
 		queue:      queue.NewConcurrentQueue[Event](),
 	}
 }
@@ -83,12 +80,12 @@ func (l *Loop) loop() {
 func (l *Loop) handleEvent(e Event) {
 	h, ok := l.handlerMap[e.Type()]
 	if !ok {
-		l.logger.Error("no handler found for event", slog.Any("event", e))
+		slog.Error("no handler found for event", slog.Any("event", e))
 		return
 	}
 
 	if err := h.Handle(e, l.queue.Enqueue); err != nil {
-		l.logger.Error("failed to handle event", slog.Any("event", e), slog.Any("error", err))
+		slog.Error("failed to handle event", slog.Any("event", e), slog.Any("error", err))
 		return
 	}
 }

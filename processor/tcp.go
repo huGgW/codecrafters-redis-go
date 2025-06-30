@@ -2,31 +2,39 @@ package processor
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 
 	"github.com/codecrafters-io/redis-starter-go/event"
+	"github.com/codecrafters-io/redis-starter-go/id"
+	"github.com/codecrafters-io/redis-starter-go/pkg"
 )
 
 type TCPProcessor struct {
 	listener net.Listener
-	logger   *slog.Logger
+	idIssuer id.IDIssuer[uint64]
 
+	connMap        *pkg.ConcurrentMap[uint64, *connInfo]
 	pushStopSignal chan struct{}
 }
 
-func NewTCPProcessor(address string, logger *slog.Logger) (*TCPProcessor, error) {
+type connInfo struct {
+	conn    net.Conn
+	scanner *bufio.Scanner
+}
+
+func NewTCPProcessor(address string, idIssuer id.IDIssuer[uint64]) (*TCPProcessor, error) {
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		return nil, fmt.Errorf("failed to bind to address %s", address)
 	}
 
 	return &TCPProcessor{
-		listener:       l,
-		logger:         logger,
+		listener: l,
+		idIssuer: idIssuer,
+
+		connMap:        pkg.NewConcurrentMap[uint64, *connInfo](),
 		pushStopSignal: make(chan struct{}),
 	}, nil
 }
@@ -48,11 +56,17 @@ func (t *TCPProcessor) InitPushing(push func(event.Event)) {
 			default:
 				conn, err := t.listener.Accept()
 				if err != nil {
-					t.logger.Error("failed to accept connection", "error", err)
+					slog.Error("failed to accept connection", "error", err)
 					continue
 				}
 
-				push(&event.ReadEvent{Reader: conn})
+				id := t.idIssuer.Issue()
+
+				t.connMap.Store(id, &connInfo{
+					conn: conn,
+				})
+
+				push(&event.ReadEvent{ID_: id})
 			}
 		}
 	}()
@@ -64,100 +78,159 @@ func (t *TCPProcessor) ShutdownPushing() {
 	}
 }
 
-type TCPReadHandler struct{}
+func (t *TCPProcessor) ReadHandler() *tcpReadHandler {
+	return &tcpReadHandler{
+		tcpProcessor: t,
+	}
+}
 
-func (h *TCPReadHandler) Target() event.Type {
+func (t *TCPProcessor) WriteHandler() *tcpWriteHandler {
+	return &tcpWriteHandler{
+		tcpProcessor: t,
+	}
+}
+
+func (t *TCPProcessor) CloseHandler() *tcpCloseHandler {
+	return &tcpCloseHandler{tcpProcessor: t}
+}
+
+type tcpReadHandler struct {
+	tcpProcessor *TCPProcessor
+}
+
+func (h *tcpReadHandler) Target() event.Type {
 	return event.ReadEventType
 }
 
-func (h *TCPReadHandler) Handle(e event.Event, push func(event.Event)) error {
+func (h *tcpReadHandler) Handle(e event.Event, push func(event.Event)) error {
 	readEvent, ok := e.(*event.ReadEvent)
 	if !ok {
 		return event.ErrInvalidEventType
 	}
 
-	conn, ok := readEvent.Reader.(net.Conn)
+	connInfo, ok := h.tcpProcessor.connMap.Load(readEvent.ID())
 	if !ok {
-		return fmt.Errorf("reader is not a net.Conn: %T", readEvent.Reader)
+		return fmt.Errorf("connection does not exists for id %d", readEvent.ID())
+	}
+
+	if connInfo.scanner == nil {
+		connInfo.scanner = pkg.NewCRLFScanner(connInfo.conn)
 	}
 
 	go func() {
-		bufReader := bufio.NewReader(conn)
-		if _, err := bufReader.ReadString('\n'); err != nil {
-			if errors.Is(err, io.EOF) {
-				push(&event.CloseEvent{Closer: conn})
-			} else {
-				push(&event.ErrorEvent{Err: fmt.Errorf("failed to read from reader: %w", err)})
+		scanned := connInfo.scanner.Scan()
+		if !scanned {
+			if err := connInfo.scanner.Err(); err != nil {
+				push(&event.ErrorEvent{
+					Event: readEvent,
+					Err:   err,
+				})
 			}
+			connInfo.scanner = nil
+			push(&event.CloseEvent{ID_: readEvent.ID()})
 			return
 		}
 
-		// NOTE: should be changed to parse command
-		push(&event.WriteEvent{
-			Data:   []byte("+PONG\r\n"),
-			Writer: conn,
+		data := connInfo.scanner.Bytes()
+		slog.Info("read from",
+			slog.Uint64("id", readEvent.ID()),
+			slog.Any("conn", connInfo.conn.RemoteAddr()),
+			slog.Any("data", data),
+		)
+		push(&event.LexingEvent{
+			ID_:  readEvent.ID(),
+			Data: data,
 		})
 	}()
 
 	return nil
 }
 
-type TCPWriteHandler struct{}
+type tcpWriteHandler struct {
+	tcpProcessor *TCPProcessor
+}
 
-func (h *TCPWriteHandler) Target() event.Type {
+func (h *tcpWriteHandler) Target() event.Type {
 	return event.WriteEventType
 }
 
-func (h *TCPWriteHandler) Handle(e event.Event, push func(event.Event)) error {
+func (h *tcpWriteHandler) Handle(e event.Event, push func(event.Event)) error {
 	writeEvent, ok := e.(*event.WriteEvent)
 	if !ok {
 		return event.ErrInvalidEventType
 	}
 
-	conn, ok := writeEvent.Writer.(net.Conn)
+	ci, ok := h.tcpProcessor.connMap.Load(writeEvent.ID())
 	if !ok {
-		return fmt.Errorf("invalid connection type")
+		return fmt.Errorf("connection does not exists for id %d", writeEvent.ID())
 	}
 
 	go func() {
-		writer := bufio.NewWriter(conn)
+		slog.Info("write to",
+			slog.Uint64("id", writeEvent.ID()),
+			slog.Any("conn", ci.conn.RemoteAddr()),
+			slog.Any("data", writeEvent.Data),
+		)
+
+		writer := bufio.NewWriter(ci.conn)
 		_, err := writer.Write(writeEvent.Data)
 		if err != nil {
-			push(&event.ErrorEvent{Err: err})
+			push(&event.ErrorEvent{Event: writeEvent, Err: err})
 			return
 		}
 
 		err = writer.Flush()
 		if err != nil {
-			push(&event.ErrorEvent{Err: err})
+			push(&event.ErrorEvent{Event: writeEvent, Err: err})
 			return
 		}
 
-		push(&event.ReadEvent{Reader: conn})
+		// maybe more data is available to read, so we always publish ReadEvent
+		id := h.tcpProcessor.idIssuer.Issue()
+		h.tcpProcessor.connMap.Store(
+			id,
+			&connInfo{
+				conn:    ci.conn,
+				scanner: ci.scanner,
+			},
+		)
+
+		slog.Info("pushing read event after write",
+			slog.Uint64("from_id", writeEvent.ID()),
+			slog.Uint64("to_id", id),
+			slog.Any("conn", ci.conn.RemoteAddr()),
+		)
+		push(&event.ReadEvent{ID_: id})
 	}()
 
 	return nil
 }
 
-type TCPCloseHandler struct{}
+type tcpCloseHandler struct {
+	tcpProcessor *TCPProcessor
+}
 
-func (h *TCPCloseHandler) Target() event.Type {
+func (h *tcpCloseHandler) Target() event.Type {
 	return event.CloseEventType
 }
 
-func (h *TCPCloseHandler) Handle(e event.Event, push func(event.Event)) error {
+func (h *tcpCloseHandler) Handle(e event.Event, push func(event.Event)) error {
 	closeEvent, ok := e.(*event.CloseEvent)
 	if !ok {
 		return event.ErrInvalidEventType
 	}
 
-	conn, ok := closeEvent.Closer.(net.Conn)
-	if !ok {
-		return fmt.Errorf("invalid connection type")
+	connInfo, loaded := h.tcpProcessor.connMap.LoadAndDelete(closeEvent.ID())
+	if !loaded {
+		return nil // when connection is already closed, do nothing
 	}
 
-	if err := conn.Close(); err != nil {
-		push(&event.ErrorEvent{Err: fmt.Errorf("failed to close connection: %w", err)})
+	slog.Info("closing....",
+		slog.Uint64("id", closeEvent.ID()),
+		slog.Any("conn", connInfo.conn.RemoteAddr()),
+	)
+	if err := connInfo.conn.Close(); err != nil {
+		push(&event.ErrorEvent{Event: closeEvent, Err: fmt.Errorf("failed to close connection: %w", err)})
 		return nil
 	}
 
