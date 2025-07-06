@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/event"
 	"github.com/codecrafters-io/redis-starter-go/spec"
@@ -137,13 +138,16 @@ func (p *Parser) parseSetCommand(data spec.Data) (*spec.SetCommand, error) {
 	}
 
 	// NOTE: after supporting extra options, this should be changed
-	if arrData.Len != 3 {
+	if arrData.Len < 2 {
 		return nil, fmt.Errorf(
-			"invalid SET command format: expected 2 arguments, got %d",
+			"invalid SET command format: expected at least 2 arguments, got %d",
 			arrData.Len-1,
 		)
 	}
 
+	setCmd := &spec.SetCommand{}
+
+	// parse key, value
 	keyData := arrData.A[1]
 	valueData := arrData.A[2]
 
@@ -151,13 +155,52 @@ func (p *Parser) parseSetCommand(data spec.Data) (*spec.SetCommand, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid key type for SET command: %w", err)
 	}
+	setCmd.Key = key
 
 	value, err := spec.Value[string](valueData)
 	if err != nil {
 		return nil, fmt.Errorf("invalid value type for SET command: %w", err)
 	}
+	setCmd.Value = value
 
-	return &spec.SetCommand{Key: key, Value: value}, nil
+	// parse flags
+	const (
+		FlagUninitialized = "\r\n" // initialize state, this is not a real flag
+		FlagPX            = "PX"
+	)
+	flagState := FlagUninitialized
+	for _, data := range arrData.A[3:] {
+		switch flagState {
+		case FlagUninitialized:
+			flag, err := spec.Value[string](data)
+			if err != nil {
+				return nil, fmt.Errorf("invalid flag type for SET command: %w", err)
+			}
+
+			flagState = strings.ToUpper(flag)
+		case FlagPX:
+			millStr, err := spec.Value[string](data)
+			if err != nil {
+				return nil, fmt.Errorf("invalid PX value type for SET command: %w", err)
+			}
+
+			mill, err := strconv.ParseInt(millStr, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid PX value for SET command: %w", err)
+			}
+
+			if setCmd.ExpireAt != nil {
+				return nil, fmt.Errorf("Expiration flag is already set for key %s", setCmd.Key)
+			}
+
+			expireAt := time.Now().Add(time.Duration(mill) * time.Millisecond)
+			setCmd.ExpireAt = &expireAt
+
+			flagState = FlagUninitialized
+		}
+	}
+
+	return setCmd, nil
 }
 
 type parseHandler struct {

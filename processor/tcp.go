@@ -34,8 +34,7 @@ func NewTCPProcessor(address string, idIssuer id.IDIssuer[uint64]) (*TCPProcesso
 		listener: l,
 		idIssuer: idIssuer,
 
-		connMap:        pkg.NewConcurrentMap[uint64, *connInfo](),
-		pushStopSignal: make(chan struct{}),
+		connMap: pkg.NewConcurrentMap[uint64, *connInfo](),
 	}, nil
 }
 
@@ -48,33 +47,36 @@ func (t *TCPProcessor) Close() error {
 }
 
 func (t *TCPProcessor) InitPushing(push func(event.Event)) {
-	go func() {
-		for {
-			select {
-			case <-t.pushStopSignal:
-				return
-			default:
-				conn, err := t.listener.Accept()
-				if err != nil {
-					slog.Error("failed to accept connection", "error", err)
-					continue
-				}
-
-				id := t.idIssuer.Issue()
-
-				t.connMap.Store(id, &connInfo{
-					conn: conn,
-				})
-
-				push(&event.ReadEvent{ID_: id})
-			}
-		}
-	}()
+	t.pushStopSignal = make(chan struct{})
+	go t.loop(push)
 }
 
 func (t *TCPProcessor) ShutdownPushing() {
 	if t.pushStopSignal != nil {
 		close(t.pushStopSignal)
+	}
+}
+
+func (t *TCPProcessor) loop(push func(event.Event)) {
+	for {
+		select {
+		case <-t.pushStopSignal:
+			return
+		default:
+			conn, err := t.listener.Accept()
+			if err != nil {
+				slog.Error("failed to accept connection", "error", err)
+				continue
+			}
+
+			id := t.idIssuer.Issue()
+
+			t.connMap.Store(id, &connInfo{
+				conn: conn,
+			})
+
+			push(&event.ReadEvent{ID_: id})
+		}
 	}
 }
 

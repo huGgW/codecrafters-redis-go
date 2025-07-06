@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/event"
 	"github.com/codecrafters-io/redis-starter-go/id"
@@ -33,6 +34,8 @@ func main() {
 	}
 	defer func() { _ = tcpProcessor.Close() }()
 
+	expirer := processor.NewExpirer(1000*time.Millisecond, idIssuer, storage)
+
 	lexer := processor.NewLexer()
 	parser := processor.NewParser()
 	executor := processor.NewExecutor(storage)
@@ -43,13 +46,17 @@ func main() {
 			tcpProcessor.ReadHandler(),
 			tcpProcessor.WriteHandler(),
 			tcpProcessor.CloseHandler(),
+			expirer.ExpireEventHandler(),
 			lexer.LexingHandler(),
 			parser.ParseHandler(),
 			executor.ExecuteHandler(),
 			formatter.FormatHandler(),
 			processor.NewErrorHandler(),
 		},
-		[]event.Pusher{tcpProcessor},
+		[]event.Pusher{
+			tcpProcessor,
+			expirer,
+		},
 	)
 
 	loop.Start()

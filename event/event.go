@@ -2,6 +2,7 @@ package event
 
 import (
 	"errors"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/spec"
 )
@@ -31,6 +32,8 @@ const (
 	ReadEventType  = "read"
 	WriteEventType = "write"
 	CloseEventType = "close"
+
+	ExpireEventType = "expire"
 
 	LexingEventType  = "lexing"
 	ParseEventType   = "parse"
@@ -88,6 +91,19 @@ func (c *CloseEvent) ID() uint64 {
 
 func (c *CloseEvent) Type() Type {
 	return CloseEventType
+}
+
+type ExpireEvent struct {
+	ID_  uint64
+	Time time.Time
+}
+
+func (e *ExpireEvent) Type() Type {
+	return ExpireEventType
+}
+
+func (e *ExpireEvent) ID() uint64 {
+	return e.ID_
 }
 
 type LexingEvent struct {

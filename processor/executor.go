@@ -48,7 +48,7 @@ func (e *Executor) Execute(cmd spec.Command) (spec.Data, error) {
 
 	case *spec.SetCommand:
 		setCmd := cmd.(*spec.SetCommand)
-		if err := e.storage.Set(setCmd.Key, setCmd.Value); err != nil {
+		if err := e.storage.Set(setCmd.Key, setCmd.Value, setCmd.ExpireAt); err != nil {
 			return nil, fmt.Errorf("failed to set key {%s} as value {%s}: %w", setCmd.Key, setCmd.Value, err)
 		}
 

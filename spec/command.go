@@ -1,5 +1,7 @@
 package spec
 
+import "time"
+
 type Command interface {
 	command()
 }
@@ -21,8 +23,9 @@ type GetCommand struct {
 func (e *GetCommand) command() {}
 
 type SetCommand struct {
-	Key   string
-	Value string
+	Key      string
+	Value    string
+	ExpireAt *time.Time
 }
 
 func (e *SetCommand) command() {}
