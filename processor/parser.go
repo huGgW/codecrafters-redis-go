@@ -30,21 +30,37 @@ func (p *Parser) Parse(data spec.Data) (spec.Command, error) {
 		return nil, fmt.Errorf("failed to parse data: %w", err)
 	}
 
-	var cmd spec.Command
 	switch cmdStr {
 	case "PING":
-		cmd = &spec.PingCommand{}
+		return &spec.PingCommand{}, nil
+
 	case "ECHO":
-		echoCmd := &spec.EchoCommand{}
-		if err := p.fillEchoCommand(echoCmd, data); err != nil {
+		echoCmd, err := p.parseEchoCommand(data)
+		if err != nil {
 			return nil, fmt.Errorf("invalid format for ECHO command: %w", err)
 		}
-		cmd = echoCmd
+
+		return echoCmd, nil
+
+	case "GET":
+		getCmd, err := p.parseGetCommand(data)
+		if err != nil {
+			return nil, fmt.Errorf("invalid format for GET command: %w", err)
+		}
+
+		return getCmd, nil
+
+	case "SET":
+		setCmd, err := p.parseSetCommand(data)
+		if err != nil {
+			return nil, fmt.Errorf("invalid format for SET command: %w", err)
+		}
+
+		return setCmd, nil
+
 	default:
 		return nil, fmt.Errorf("invalid command: %s", cmdStr)
 	}
-
-	return cmd, nil
 }
 
 func (p *Parser) parseCommandString(data spec.Data) (string, error) {
@@ -64,26 +80,84 @@ func (p *Parser) parseCommandString(data spec.Data) (string, error) {
 	}
 }
 
-func (p *Parser) fillEchoCommand(cmd *spec.EchoCommand, data spec.Data) error {
+func (p *Parser) parseEchoCommand(data spec.Data) (*spec.EchoCommand, error) {
 	arrData, isType := data.(*spec.ArrayData)
 	if !isType {
-		return fmt.Errorf("data type %T is not array data type", data)
+		return nil, fmt.Errorf("data type %T is not array data type", data)
 	}
 
-	if arrData.Len >= 2 {
-		echoData := arrData.A[1]
-		echoVal := echoData.Value()
-		switch echoData.Type().Kind() {
-		case reflect.String:
-			cmd.Value = echoVal.(string)
-		case reflect.Int64:
-			cmd.Value = strconv.FormatInt(echoVal.(int64), 10)
-		default:
-			return fmt.Errorf("invalid data type for echo command: %T", echoVal)
-		}
+	if arrData.Len != 2 {
+		return nil, fmt.Errorf(
+			"invalid ECHO command format: expected 1 argument, got %d",
+			arrData.Len-1,
+		)
 	}
 
-	return nil
+	var value string
+	echoData := arrData.A[1]
+	echoVal := echoData.Value()
+	switch echoData.Type().Kind() {
+	case reflect.String:
+		value = echoVal.(string)
+	case reflect.Int64:
+		value = strconv.FormatInt(echoVal.(int64), 10)
+	default:
+		return nil, fmt.Errorf("invalid data type for echo command: %T", echoVal)
+	}
+
+	return &spec.EchoCommand{Value: value}, nil
+}
+
+func (p *Parser) parseGetCommand(data spec.Data) (*spec.GetCommand, error) {
+	arrData, isType := data.(*spec.ArrayData)
+	if !isType {
+		return nil, fmt.Errorf("data type %T is not array data type", data)
+	}
+
+	if arrData.Len != 2 {
+		return nil, fmt.Errorf(
+			"invalid GET command format: expected 1 argument, got %d",
+			arrData.Len-1,
+		)
+	}
+
+	keyData := arrData.A[1]
+	key, err := spec.Value[string](keyData)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key type for GET command: %w", err)
+	}
+
+	return &spec.GetCommand{Key: key}, nil
+}
+
+func (p *Parser) parseSetCommand(data spec.Data) (*spec.SetCommand, error) {
+	arrData, isType := data.(*spec.ArrayData)
+	if !isType {
+		return nil, fmt.Errorf("data type %T is not array data type", data)
+	}
+
+	// NOTE: after supporting extra options, this should be changed
+	if arrData.Len != 3 {
+		return nil, fmt.Errorf(
+			"invalid SET command format: expected 2 arguments, got %d",
+			arrData.Len-1,
+		)
+	}
+
+	keyData := arrData.A[1]
+	valueData := arrData.A[2]
+
+	key, err := spec.Value[string](keyData)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key type for SET command: %w", err)
+	}
+
+	value, err := spec.Value[string](valueData)
+	if err != nil {
+		return nil, fmt.Errorf("invalid value type for SET command: %w", err)
+	}
+
+	return &spec.SetCommand{Key: key, Value: value}, nil
 }
 
 type parseHandler struct {

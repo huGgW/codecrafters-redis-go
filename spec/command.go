@@ -13,3 +13,16 @@ type EchoCommand struct {
 }
 
 func (e *EchoCommand) command() {}
+
+type GetCommand struct {
+	Key string
+}
+
+func (e *GetCommand) command() {}
+
+type SetCommand struct {
+	Key   string
+	Value string
+}
+
+func (e *SetCommand) command() {}

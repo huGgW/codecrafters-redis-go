@@ -30,6 +30,10 @@ type SimpleStringData struct {
 	S string
 }
 
+func SimpleStringOf(s string) *SimpleStringData {
+	return &SimpleStringData{S: s}
+}
+
 func (s *SimpleStringData) data()              {}
 func (s *SimpleStringData) Value() any         { return s.S }
 func (s *SimpleStringData) Type() reflect.Type { return reflect.TypeFor[string]() }
@@ -58,11 +62,23 @@ type BulkStringData struct {
 	S   string
 }
 
+func NullBulkString() *BulkStringData {
+	return &BulkStringData{Len: -1, S: ""}
+}
+
+func BulkStringOf(s string) *BulkStringData {
+	return &BulkStringData{Len: len(s), S: s}
+}
+
 func (b *BulkStringData) data()              {}
 func (b *BulkStringData) Value() any         { return b.S }
 func (b *BulkStringData) Type() reflect.Type { return reflect.TypeFor[string]() }
 func (b *BulkStringData) Incomplete() bool {
 	return len(b.S) < b.Len
+}
+
+func (b *BulkStringData) IsNull() bool {
+	return b.Len == -1
 }
 
 type ArrayData struct {

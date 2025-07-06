@@ -49,15 +49,18 @@ func (f *Formatter) formatTo(data spec.Data, bb *bytes.Buffer) {
 		bb.WriteString("\r\n")
 
 	case *spec.BulkStringData:
+		bulkStringData := data.(*spec.BulkStringData)
+
 		bb.WriteByte(BulkStringPrefix)
 
-		str, _ := spec.Value[string](data)
-
-		bb.WriteString(strconv.Itoa(len(str)))
+		bb.WriteString(strconv.Itoa(bulkStringData.Len))
 		bb.WriteString("\r\n")
 
-		bb.WriteString(str)
-		bb.WriteString("\r\n")
+		if !bulkStringData.IsNull() {
+			str, _ := spec.Value[string](bulkStringData)
+			bb.WriteString(str)
+			bb.WriteString("\r\n")
+		}
 
 	case *spec.ArrayData:
 		bb.WriteByte(ArrayPrefix)

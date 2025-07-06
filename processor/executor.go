@@ -5,12 +5,17 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/event"
 	"github.com/codecrafters-io/redis-starter-go/spec"
+	"github.com/codecrafters-io/redis-starter-go/storage"
 )
 
-type Executor struct{}
+type Executor struct {
+	storage storage.Storage
+}
 
-func NewExecutor() *Executor {
-	return &Executor{}
+func NewExecutor(storage storage.Storage) *Executor {
+	return &Executor{
+		storage: storage,
+	}
 }
 
 func (e *Executor) ExecuteHandler() *executeHandler {
@@ -22,13 +27,33 @@ func (e *Executor) ExecuteHandler() *executeHandler {
 func (e *Executor) Execute(cmd spec.Command) (spec.Data, error) {
 	switch cmd.(type) {
 	case *spec.PingCommand:
-		return &spec.SimpleStringData{S: "PONG"}, nil
+		return spec.SimpleStringOf("PONG"), nil
+
 	case *spec.EchoCommand:
 		echoCmd := cmd.(*spec.EchoCommand)
-		return &spec.BulkStringData{
-			Len: len(echoCmd.Value),
-			S:   echoCmd.Value,
-		}, nil
+		return spec.BulkStringOf(echoCmd.Value), nil
+
+	case *spec.GetCommand:
+		getCmd := cmd.(*spec.GetCommand)
+		val, err := e.storage.Get(getCmd.Key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get key %s: %w", getCmd.Key, err)
+		}
+
+		if val == nil {
+			return spec.NullBulkString(), nil
+		} else {
+			return spec.BulkStringOf(*val), nil
+		}
+
+	case *spec.SetCommand:
+		setCmd := cmd.(*spec.SetCommand)
+		if err := e.storage.Set(setCmd.Key, setCmd.Value); err != nil {
+			return nil, fmt.Errorf("failed to set key {%s} as value {%s}: %w", setCmd.Key, setCmd.Value, err)
+		}
+
+		return spec.SimpleStringOf("OK"), nil
+
 	default:
 		return nil, fmt.Errorf("invalid command: %+v", cmd)
 	}

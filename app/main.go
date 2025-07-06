@@ -8,6 +8,7 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/event"
 	"github.com/codecrafters-io/redis-starter-go/id"
 	"github.com/codecrafters-io/redis-starter-go/processor"
+	"github.com/codecrafters-io/redis-starter-go/storage"
 )
 
 func main() {
@@ -21,6 +22,9 @@ func main() {
 	// initialize ID issuer
 	idIssuer := &id.NumIDIssuer{}
 
+	// initialize storage
+	storage := storage.NewInMemoryStorage()
+
 	// initialize handlers
 	tcpProcessor, err := processor.NewTCPProcessor("0.0.0.0:6379", idIssuer)
 	if err != nil {
@@ -31,7 +35,7 @@ func main() {
 
 	lexer := processor.NewLexer()
 	parser := processor.NewParser()
-	executor := processor.NewExecutor()
+	executor := processor.NewExecutor(storage)
 	formatter := processor.NewFormatter()
 
 	loop := event.NewLoop(
